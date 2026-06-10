@@ -1,5 +1,50 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
-* { box-sizing: border-box; }
-body { margin: 0; padding: 0; }
-#root { width: 100%; min-height: 100vh; text-align: left; }
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  text-align: left;
+}
+
+/* ── Recharts dark overrides ── */
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line {
+  stroke: #334155 !important;
+}
+.dark .recharts-text {
+  fill: #94a3b8 !important;
+}
+.dark .recharts-default-tooltip {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+}
+.dark .recharts-tooltip-label {
+  color: #e2e8f0 !important;
+}
+.dark .recharts-legend-item-text {
+  color: #cbd5e1 !important;
+}
+.dark .recharts-tooltip-item {
+  color: #e2e8f0 !important;
+}
+
+/* ── Scrollbar ── */
+.dark ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}

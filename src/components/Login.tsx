@@ -34,10 +34,9 @@ export default function Login({ onLogin }: Props) {
   }
 
   return (
-    <div className="min-h-screen flex" style={{ fontFamily: 'system-ui, sans-serif' }}>
+    <div className="min-h-screen flex dark:bg-slate-900 transition-colors" style={{ fontFamily: 'system-ui, sans-serif' }}>
       {/* Left — branding */}
-      <div className="hidden lg:flex flex-col w-1/2 bg-blue-700 text-white p-12 relative overflow-hidden">
-        {/* Background circles */}
+      <div className="hidden lg:flex flex-col w-1/2 bg-blue-700 dark:bg-blue-800 text-white p-12 relative overflow-hidden">
         <div className="absolute inset-0 overflow-hidden opacity-10">
           {Array.from({ length: 6 }).map((_, row) =>
             Array.from({ length: 6 }).map((_, col) => (
@@ -96,22 +95,21 @@ export default function Login({ onLogin }: Props) {
       </div>
 
       {/* Right — form */}
-      <div className="flex-1 flex items-center justify-center bg-slate-50 p-8">
+      <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-8 transition-colors">
         <div className="w-full max-w-sm">
-          {/* Mobile logo */}
           <div className="flex lg:hidden items-center gap-2 mb-8">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <Flame size={16} className="text-white" />
             </div>
-            <span className="font-bold text-slate-800">HeatNet SCADA</span>
+            <span className="font-bold text-slate-800 dark:text-white">HeatNet SCADA</span>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
-            <h2 className="text-xl font-bold text-slate-800 mb-1">Авторизация</h2>
-            <p className="text-slate-500 text-sm mb-6">Введите данные для входа в систему</p>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm p-8 transition-colors">
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Авторизация</h2>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">Введите данные для входа в систему</p>
 
             {error && (
-              <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-2.5 mb-5">
+              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-400 text-sm rounded-lg px-4 py-2.5 mb-5">
                 <AlertCircle size={15} className="flex-shrink-0" />
                 {error}
               </div>
@@ -119,7 +117,7 @@ export default function Login({ onLogin }: Props) {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5 uppercase tracking-wide">
                   Логин
                 </label>
                 <input
@@ -128,13 +126,13 @@ export default function Login({ onLogin }: Props) {
                   onChange={e => setLogin(e.target.value)}
                   placeholder="Введите логин"
                   autoComplete="username"
-                  className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                  className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-2.5 text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-white dark:bg-slate-700"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5 uppercase tracking-wide">
                   Пароль
                 </label>
                 <input
@@ -143,7 +141,7 @@ export default function Login({ onLogin }: Props) {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="Введите пароль"
                   autoComplete="current-password"
-                  className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                  className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-2.5 text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-white dark:bg-slate-700"
                   required
                 />
               </div>
@@ -157,7 +155,7 @@ export default function Login({ onLogin }: Props) {
               </button>
             </form>
 
-            <p className="text-center text-xs text-slate-400 mt-6">
+            <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-6">
               Система предназначена только для авторизованных сотрудников
             </p>
           </div>

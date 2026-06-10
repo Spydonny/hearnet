@@ -1,165 +1,270 @@
-import { useState } from 'react';
-import { FileText, Download, Calendar, BarChart2, TrendingUp, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { FileText, Download, Calendar, BarChart2, TrendingUp, AlertTriangle, Loader2, X, Plus } from 'lucide-react';
+import { apiGet, apiPost, apiDownload } from '../../utils/api';
+import type { ApiReport } from '../../utils/api';
 
-interface Report {
+interface ReportRow {
   id: number;
   title: string;
   period: string;
   generated: string;
-  type: 'Ежедневный' | 'Еженедельный' | 'Аварийный';
-  size: string;
-  events: number;
+  reportType: 'daily' | 'weekly' | 'monthly';
+  file_path: string;
+  userId: number;
 }
 
-const REPORTS: Report[] = [
-  { id: 1, title: 'Ежедневный отчёт — 09.06.2026', period: '09.06.2026', generated: '10.06.2026 00:05', type: 'Ежедневный', size: '124 КБ', events: 148 },
-  { id: 2, title: 'Ежедневный отчёт — 08.06.2026', period: '08.06.2026', generated: '09.06.2026 00:05', type: 'Ежедневный', size: '118 КБ', events: 132 },
-  { id: 3, title: 'Еженедельный отчёт — Нед. 23', period: '02.06–08.06.2026', generated: '09.06.2026 01:00', type: 'Еженедельный', size: '541 КБ', events: 901 },
-  { id: 4, title: 'Аварийный отчёт — ЦТП-2 перегрев', period: '07.06.2026 14:22', generated: '07.06.2026 15:00', type: 'Аварийный', size: '89 КБ', events: 3 },
-  { id: 5, title: 'Ежедневный отчёт — 07.06.2026', period: '07.06.2026', generated: '08.06.2026 00:05', type: 'Ежедневный', size: '201 КБ', events: 165 },
-  { id: 6, title: 'Еженедельный отчёт — Нед. 22', period: '26.05–01.06.2026', generated: '02.06.2026 01:00', type: 'Еженедельный', size: '498 КБ', events: 843 },
-  { id: 7, title: 'Аварийный отчёт — НС-4 падение давления', period: '03.06.2026 09:11', generated: '03.06.2026 09:45', type: 'Аварийный', size: '72 КБ', events: 2 },
-];
-
-const TYPE_CLS = {
-  'Ежедневный':   { badge: 'bg-blue-100 text-blue-700',   icon: Calendar,    dot: 'bg-blue-500' },
-  'Еженедельный': { badge: 'bg-violet-100 text-violet-700', icon: BarChart2,   dot: 'bg-violet-500' },
-  'Аварийный':    { badge: 'bg-red-100 text-red-700',      icon: AlertTriangle, dot: 'bg-red-500' },
+const TYPE_LABEL: Record<string, string> = {
+  daily: 'Ежедневный',
+  weekly: 'Еженедельный',
+  monthly: 'Ежемесячный',
 };
 
-function downloadCSV() {
-  const header = 'ID,Название,Тип,Период,Сформирован,Событий,Размер';
-  const rows = REPORTS.map(r =>
-    `${r.id},"${r.title}",${r.type},${r.period},${r.generated},${r.events},${r.size}`
-  );
-  const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'reports.csv'; a.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadExcel() {
-  const header = 'ID\tНазвание\tТип\tПериод\tСформирован\tСобытий\tРазмер';
-  const rows = REPORTS.map(r =>
-    `${r.id}\t${r.title}\t${r.type}\t${r.period}\t${r.generated}\t${r.events}\t${r.size}`
-  );
-  const blob = new Blob([[header, ...rows].join('\n')], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'reports.xls'; a.click();
-  URL.revokeObjectURL(url);
-}
+const TYPE_META: Record<string, { badge: string; icon: React.ElementType; dot: string }> = {
+  daily:   { badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300', icon: Calendar,   dot: 'bg-blue-500' },
+  weekly:  { badge: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300', icon: BarChart2, dot: 'bg-violet-500' },
+  monthly: { badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', icon: TrendingUp, dot: 'bg-emerald-500' },
+};
 
 export default function Reports() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [genDateFrom, setGenDateFrom] = useState('');
+  const [genDateTo, setGenDateTo] = useState('');
+  const [genNodeId, setGenNodeId] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState('');
+  const [genSuccess, setGenSuccess] = useState('');
+
+  const fetchReports = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiGet<{
+        reports?: ApiReport[];
+        items?: ApiReport[];
+        total?: number;
+      }>('/reports');
+
+      const list = data.reports ?? data.items ?? [];
+      const mapped: ReportRow[] = list.map(r => ({
+        id: r.report_id,
+        title: `${TYPE_LABEL[r.report_type] ?? 'Отчёт'} — ${r.date_from} / ${r.date_to}`,
+        period: `${r.date_from} — ${r.date_to}`,
+        generated: r.created_at ? new Date(r.created_at).toLocaleString('ru-RU') : '—',
+        reportType: r.report_type,
+        file_path: r.file_path,
+        userId: r.user_id,
+      }));
+      setReports(mapped);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка загрузки отчётов');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchReports(); }, [fetchReports]);
+
+  async function handleDownload(reportId: number, format: 'csv' | 'xlsx') {
+    try {
+      const blob = await apiDownload(`/reports/export/${format}?id=${reportId}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `report_${reportId}.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Ошибка скачивания: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`);
+    }
+  }
+
+  async function handleGenerate(e: React.FormEvent) {
+    e.preventDefault();
+    setGenError('');
+    setGenSuccess('');
+    setGenerating(true);
+    try {
+      const body: Record<string, string | number> = {
+        date_from: genDateFrom,
+        date_to: genDateTo,
+        // both formats generated automatically
+      };
+      if (genNodeId) body.node_id = Number(genNodeId);
+
+      const result = await apiPost<{ detail: string; id: number; file_path?: string }>('/reports/generate', body);
+      setGenSuccess(`Отчёт #${result.id} сгенерирован успешно`);
+      setShowGenerate(false);
+      fetchReports();
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : 'Ошибка генерации');
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-slate-800">Отчёты</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Сформированные отчёты по работе тепловой сети</p>
+          <h1 className="text-lg font-bold text-slate-800 dark:text-white">Отчёты</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Сформированные отчёты по работе тепловой сети</p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setIsMenuOpen(o => !o)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors shadow-sm"
-          >
-            <FileText size={15} />
-            Сформировать отчет
-          </button>
-          {isMenuOpen && (
-            <div className="absolute top-full left-0 mt-2 w-40 bg-white border border-slate-200 shadow-md rounded-md z-50 overflow-hidden">
-              <button
-                onClick={() => { downloadCSV(); setIsMenuOpen(false); }}
-                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-slate-100 whitespace-nowrap"
-              >
-                Скачать CSV
-              </button>
-              <button
-                onClick={() => { downloadExcel(); setIsMenuOpen(false); }}
-                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-slate-100 whitespace-nowrap"
-              >
-                Скачать Excel
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => setShowGenerate(true)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors shadow-sm"
+        >
+          <Plus size={15} />
+          Сформировать отчет
+        </button>
       </div>
 
-      {/* Summary cards */}
+      {showGenerate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowGenerate(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-6 w-full max-w-md mx-4 transition-colors" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-800 dark:text-white">Сформировать отчёт</h3>
+              <button onClick={() => setShowGenerate(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                <X size={18} />
+              </button>
+            </div>
+
+            {genSuccess && (
+              <div className="mb-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-400 text-xs rounded-lg px-3 py-2">{genSuccess}</div>
+            )}
+            {genError && (
+              <div className="mb-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-400 text-xs rounded-lg px-3 py-2">{genError}</div>
+            )}
+
+            <form onSubmit={handleGenerate} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Дата от</label>
+                  <input type="date" value={genDateFrom} onChange={e => setGenDateFrom(e.target.value)}
+                    required
+                    className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Дата до</label>
+                  <input type="date" value={genDateTo} onChange={e => setGenDateTo(e.target.value)}
+                    required
+                    className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">ID узла (необязательно)</label>
+                <input type="number" value={genNodeId} onChange={e => setGenNodeId(e.target.value)}
+                  placeholder="Оставьте пустым для всех узлов"
+                  className="w-full border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors" />
+              </div>
+
+              <button type="submit" disabled={generating}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors">
+                {generating ? 'Генерация CSV и XLSX...' : 'Сформировать'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Всего отчётов', value: String(REPORTS.length), icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Аварийных', value: String(REPORTS.filter(r => r.type === 'Аварийный').length), icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-50' },
-          { label: 'Событий за период', value: String(REPORTS.reduce((s, r) => s + r.events, 0)), icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+          { label: 'Всего отчётов', value: String(reports.length), icon: FileText, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/30' },
+          { label: 'Типов отчётов', value: String(new Set(reports.map(r => r.reportType)).size), icon: BarChart2, color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/30' },
+          { label: 'Скачиваний', value: '—', icon: Download, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-900/30' },
         ].map(({ label, value, icon: Icon, color, bg }) => (
-          <div key={label} className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4">
+          <div key={label} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex items-center gap-4 transition-colors">
             <div className={`w-10 h-10 rounded-xl ${bg} flex items-center justify-center`}>
               <Icon size={18} className={color} />
             </div>
             <div>
-              <div className="text-2xl font-bold text-slate-800">{value}</div>
-              <div className="text-xs text-slate-500">{label}</div>
+              <div className="text-2xl font-bold text-slate-800 dark:text-white">{value}</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Reports list */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100 bg-slate-50">
-          <h2 className="text-sm font-semibold text-slate-700">Список отчётов</h2>
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
+        <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Список отчётов</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-100">
-              <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Отчёт</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Тип</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Период</th>
-              <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Сформирован</th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Событий</th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Размер</th>
-              <th className="px-5 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Действие</th>
-            </tr>
-          </thead>
-          <tbody>
-            {REPORTS.map(r => {
-              const { badge, dot } = TYPE_CLS[r.type];
-              return (
-                <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <FileText size={14} className="text-slate-500" />
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={20} className="animate-spin text-blue-600 dark:text-blue-400" />
+            <span className="ml-2 text-sm text-slate-500 dark:text-slate-400">Загрузка отчётов...</span>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <AlertTriangle size={28} className="text-red-400 mb-2" />
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <button onClick={fetchReports} className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline">Повторить</button>
+          </div>
+        ) : reports.length === 0 ? (
+          <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+            Отчётов пока нет. Нажмите «Сформировать отчёт», чтобы создать первый.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 dark:border-slate-700">
+                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Отчёт</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Тип</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Период</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Сформирован</th>
+                <th className="px-5 py-3 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Скачать</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map(r => {
+                const meta = TYPE_META[r.reportType] ?? TYPE_META.daily;
+                const label = TYPE_LABEL[r.reportType] ?? 'Отчёт';
+                return (
+                  <tr key={r.id} className="border-b border-slate-50 dark:border-slate-700/50 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <FileText size={14} className="text-slate-500 dark:text-slate-400" />
+                        </div>
+                        <span className="font-medium text-slate-700 dark:text-slate-200 text-sm">{r.title}</span>
                       </div>
-                      <span className="font-medium text-slate-700 text-sm">{r.title}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${badge}`}>
-                        {r.type}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5 text-xs text-slate-500">{r.period}</td>
-                  <td className="px-5 py-3.5 text-xs text-slate-500">{r.generated}</td>
-                  <td className="px-5 py-3.5 text-right text-sm font-semibold text-slate-700 tabular-nums">{r.events}</td>
-                  <td className="px-5 py-3.5 text-right text-xs text-slate-400">{r.size}</td>
-                  <td className="px-5 py-3.5 text-center">
-                    <button className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
-                      <Download size={12} />
-                      Скачать
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${meta.dot}`} />
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${meta.badge}`}>{label}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-slate-500 dark:text-slate-400">{r.period}</td>
+                    <td className="px-5 py-3.5 text-xs text-slate-500 dark:text-slate-400">{r.generated}</td>
+                    <td className="px-5 py-3.5 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleDownload(r.id, 'csv')}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-2.5 py-1.5 rounded-lg transition-colors"
+                        >
+                          <Download size={12} />
+                          CSV
+                        </button>
+                        <button
+                          onClick={() => handleDownload(r.id, 'xlsx')}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 px-2.5 py-1.5 rounded-lg transition-colors"
+                        >
+                          <Download size={12} />
+                          XLSX
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import {
   LayoutDashboard, Activity, Database, FileText, Users, Settings,
-  Flame, ChevronDown, UserCircle2,
+  Flame, ChevronDown, UserCircle2, Loader2,
 } from 'lucide-react';
+import { apiGet } from '../utils/api';
+import type { CurrentResponse } from '../utils/api';
 
 type Page = 'dashboard' | 'monitoring' | 'history' | 'reports' | 'team' | 'settings';
 
 interface Props {
-  user: { name: string; role: string };
+  user: { name: string; role: string; login?: string; id?: number };
   currentPage: Page;
   setCurrentPage: (p: Page) => void;
   onLogout: () => void;
@@ -24,30 +26,43 @@ const NAV: { id: Page; label: string; icon: React.ElementType }[] = [
   { id: 'settings',   label: 'Настройки',  icon: Settings },
 ];
 
-const NODES = [
-  'Котельная — ЦТП-1',
-  'Котельная — ЦТП-2',
-  'Котельная — ЦТП-3',
-  'Насосная станция — НС-4',
-  'Тепловой узел — ТУ-5',
-];
-
 export default function Layout({ user, currentPage, setCurrentPage, children }: Props) {
-  const [selectedNode, setSelectedNode] = useState(NODES[0]);
+  const [nodes, setNodes] = useState<{ node_id: number; node_name: string }[]>([]);
+  const [selectedNode, setSelectedNode] = useState('');
   const [nodeOpen, setNodeOpen] = useState(false);
+  const [loadingNodes, setLoadingNodes] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const data = await apiGet<CurrentResponse>('/api/current');
+        if (cancelled) return;
+        const n = data.nodes.map(n => ({ node_id: n.node_id, node_name: n.node_name }));
+        setNodes(n);
+        if (n.length > 0) setSelectedNode(n[0].node_name);
+      } catch {
+        // backend unreachable — show empty
+      } finally {
+        if (!cancelled) setLoadingNodes(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden" style={{ fontFamily: 'system-ui, sans-serif' }}>
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden transition-colors" style={{ fontFamily: 'system-ui, sans-serif' }}>
       {/* ── Sidebar ── */}
-      <aside className="w-56 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
+      <aside className="w-56 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col flex-shrink-0 transition-colors">
         {/* Logo */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2.5">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2.5">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
             <Flame size={16} className="text-white" />
           </div>
           <div>
-            <div className="text-sm font-bold text-slate-800 leading-none">HeatNet</div>
-            <div className="text-xs text-slate-400 mt-0.5">SCADA Monitor</div>
+            <div className="text-sm font-bold text-slate-800 dark:text-white leading-none">HeatNet</div>
+            <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">SCADA Monitor</div>
           </div>
         </div>
 
@@ -59,60 +74,68 @@ export default function Layout({ user, currentPage, setCurrentPage, children }: 
               onClick={() => setCurrentPage(id)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors
                 ${currentPage === id
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}
+                  ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-slate-800 dark:hover:text-slate-200'}`}
             >
-              <Icon size={16} className={currentPage === id ? 'text-blue-600' : 'text-slate-400'} />
+              <Icon size={16} className={currentPage === id ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'} />
               {label}
             </button>
           ))}
         </nav>
 
         {/* Bottom user card */}
-        <div className="px-4 py-3 border-t border-slate-100">
-          <div className="text-xs font-semibold text-slate-700 truncate">{user.name}</div>
-          <div className="text-xs text-slate-400 truncate">{user.role}</div>
+        <div className="px-4 py-3 border-t border-slate-100 dark:border-slate-700">
+          <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">{user.name}</div>
+          <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{user.role}</div>
         </div>
       </aside>
 
       {/* ── Right side ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
-          {/* Node selector */}
+        <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-6 py-3 flex items-center justify-between flex-shrink-0 transition-colors">
+          <div></div>
+          {/* Node selector
           <div className="relative">
-            <button
-              onClick={() => setNodeOpen(o => !o)}
-              className="flex items-center gap-2 border border-slate-200 rounded-lg px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-              <span className="font-medium">{selectedNode}</span>
-              <ChevronDown size={14} className="text-slate-400" />
-            </button>
-            {nodeOpen && (
-              <div className="absolute left-0 top-full mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 overflow-hidden">
-                {NODES.map(n => (
+            {loadingNodes ? (
+              <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-600 rounded-lg px-3.5 py-2 text-sm text-slate-400 dark:text-slate-500">
+                <Loader2 size={14} className="animate-spin" />
+                Загрузка...
+              </div>
+            ) : (
+              <button
+                onClick={() => setNodeOpen(o => !o)}
+                className="flex items-center gap-2 border border-slate-200 dark:border-slate-600 rounded-lg px-3.5 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+              >
+                <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                <span className="font-medium">{selectedNode || 'Нет узлов'}</span>
+                <ChevronDown size={14} className="text-slate-400" />
+              </button>
+            )}
+            {nodeOpen && nodes.length > 0 && (
+              <div className="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg dark:shadow-black/30 z-20 py-1 overflow-hidden">
+                {nodes.map(n => (
                   <button
-                    key={n}
-                    onClick={() => { setSelectedNode(n); setNodeOpen(false); }}
+                    key={n.node_id}
+                    onClick={() => { setSelectedNode(n.node_name); setNodeOpen(false); }}
                     className={`w-full text-left px-4 py-2.5 text-sm transition-colors
-                      ${selectedNode === n ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
+                      ${selectedNode === n.node_name ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}
                   >
-                    {n}
+                    {n.node_name}
                   </button>
                 ))}
               </div>
             )}
-          </div>
+          </div> */}
 
-          {/* User info */}
+          {/* Right side: user info */}
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <div className="text-sm font-semibold text-slate-800 leading-none">{user.name}</div>
-              <div className="text-xs text-slate-400 mt-0.5">{user.role}</div>
+              <div className="text-sm font-semibold text-slate-800 dark:text-white leading-none">{user.name}</div>
+              <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{user.role}</div>
             </div>
-            <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center border border-blue-200">
-              <UserCircle2 size={20} className="text-blue-600" />
+            <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center border border-blue-200 dark:border-blue-800">
+              <UserCircle2 size={20} className="text-blue-600 dark:text-blue-400" />
             </div>
           </div>
         </header>
