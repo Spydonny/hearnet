@@ -1,11 +1,8 @@
-import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import {
   LayoutDashboard, Activity, Database, FileText, Users, Settings,
-  Flame, ChevronDown, UserCircle2, Loader2,
+  Flame, UserCircle2,
 } from 'lucide-react';
-import { apiGet } from '../utils/api';
-import type { CurrentResponse } from '../utils/api';
 
 type Page = 'dashboard' | 'monitoring' | 'history' | 'reports' | 'team' | 'settings';
 
@@ -27,30 +24,6 @@ const NAV: { id: Page; label: string; icon: React.ElementType }[] = [
 ];
 
 export default function Layout({ user, currentPage, setCurrentPage, children }: Props) {
-  const [nodes, setNodes] = useState<{ node_id: number; node_name: string }[]>([]);
-  const [selectedNode, setSelectedNode] = useState('');
-  const [nodeOpen, setNodeOpen] = useState(false);
-  const [loadingNodes, setLoadingNodes] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const data = await apiGet<CurrentResponse>('/api/current');
-        if (cancelled) return;
-        const n = data.nodes.map(n => ({ node_id: n.node_id, node_name: n.node_name }));
-        setNodes(n);
-        if (n.length > 0) setSelectedNode(n[0].node_name);
-      } catch {
-        // backend unreachable — show empty
-      } finally {
-        if (!cancelled) setLoadingNodes(false);
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
-
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden transition-colors" style={{ fontFamily: 'system-ui, sans-serif' }}>
       {/* ── Sidebar ── */}
