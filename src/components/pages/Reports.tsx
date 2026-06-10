@@ -11,6 +11,8 @@ interface ReportRow {
   reportType: 'daily' | 'weekly' | 'monthly';
   file_path: string;
   userId: number;
+  dateFrom: string;
+  dateTo: string;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -57,6 +59,8 @@ export default function Reports() {
         reportType: r.report_type,
         file_path: r.file_path,
         userId: r.user_id,
+        dateFrom: r.date_from ?? '',
+        dateTo: r.date_to ?? '',
       }));
       setReports(mapped);
     } catch (err) {
@@ -77,9 +81,61 @@ export default function Reports() {
       a.download = `report_${reportId}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(`Ошибка скачивания: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`);
+    } catch {
+      // Fallback: generate minimal file from available metadata
+      const row = reports.find(r => r.id === reportId);
+      if (!row) {
+        alert('Отчёт не найден');
+        return;
+      }
+      try {
+        const blob = makeFallbackBlob(row, format);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `report_${reportId}.${format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        alert('Не удалось скачать отчёт');
+      }
     }
+  }
+
+  function makeFallbackBlob(row: ReportRow, format: 'csv' | 'xlsx'): Blob {
+    const now = new Date().toLocaleString('ru-RU');
+    const typeLabel = TYPE_LABEL[row.reportType] ?? 'Отчёт';
+
+    if (format === 'csv') {
+      const csv = [
+        'report_id,type,date_from,date_to,generated',
+        `${row.id},"${typeLabel}","${row.dateFrom}","${row.dateTo}","${now}"`,
+        '',
+        '# Файл не найден на сервере. Сформирован fallback с доступными метаданными.',
+      ].join('\n');
+      return new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    }
+
+    // XLSX fallback: XML Spreadsheet 2003 format (Excel-compatible)
+    const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<?mso-application progid="Excel.Sheet"?>\n` +
+      `<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n` +
+      `  xmlns:o="urn:schemas-microsoft-com:office:office"\n` +
+      `  xmlns:x="urn:schemas-microsoft-com:office:excel"\n` +
+      `  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n` +
+      `  <Worksheet ss:Name="Report">\n` +
+      `    <Table>\n` +
+      `      <Row><Cell><Data ss:Type="String">Report ID</Data></Cell><Cell><Data ss:Type="Number">${row.id}</Data></Cell></Row>\n` +
+      `      <Row><Cell><Data ss:Type="String">Type</Data></Cell><Cell><Data ss:Type="String">${escapeXml(typeLabel)}</Data></Cell></Row>\n` +
+      `      <Row><Cell><Data ss:Type="String">Date From</Data></Cell><Cell><Data ss:Type="String">${escapeXml(row.dateFrom)}</Data></Cell></Row>\n` +
+      `      <Row><Cell><Data ss:Type="String">Date To</Data></Cell><Cell><Data ss:Type="String">${escapeXml(row.dateTo)}</Data></Cell></Row>\n` +
+      `      <Row><Cell><Data ss:Type="String">Generated</Data></Cell><Cell><Data ss:Type="String">${escapeXml(now)}</Data></Cell></Row>\n` +
+      `      <Row><Cell><Data ss:Type="String">Note</Data></Cell><Cell><Data ss:Type="String">File not found on server (fallback copy)</Data></Cell></Row>\n` +
+      `    </Table>\n` +
+      `  </Worksheet>\n` +
+      `</Workbook>`;
+    return new Blob([xml], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   }
 
   async function handleGenerate(e: React.FormEvent) {

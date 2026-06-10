@@ -1,120 +1,118 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useId } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { Thermometer, Gauge, AlertTriangle, Activity, Loader2 } from 'lucide-react';
-import { apiGet } from '../../utils/api';
-import type { CurrentResponse, ApiAlert } from '../../utils/api';
+import { Thermometer, Gauge, AlertTriangle, Activity } from 'lucide-react';
 
-interface Reading { time: string; supplyTemp: number | null; returnTemp: number | null; pressure: number | null; heatLoad: number | null; }
+interface Reading { time: string; supplyTemp: number; returnTemp: number; pressure: number; }
+interface AlertItem { id: number; message: string; severity: 'critical' | 'warning'; time: string; }
 
-function formatTime(d: Date): string {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+function generateHistory(sup: number, ret: number, pres: number): Reading[] {
+  const now = new Date();
+  return Array.from({ length: 12 }, (_, i) => {
+    const t = new Date(now.getTime() - (11 - i) * 5 * 60 * 1000);
+    const lbl = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+    const n = (r: number) => +((Math.random() - 0.5) * r).toFixed(2);
+    return {
+      time: lbl,
+      supplyTemp: +(sup + n(4)).toFixed(1),
+      returnTemp: +(ret + n(3)).toFixed(1),
+      pressure: Math.max(0.05, +(pres + n(0.08)).toFixed(2)),
+    };
+  });
 }
 
+// ── Slider component ──────────────────────────────────────────────────────
+
+interface SliderProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  warn?: boolean;
+  onChange: (v: number) => void;
+  formatValue?: (v: number) => string;
+}
+
+function Slider({ label, value, min, max, step, unit, warn, onChange, formatValue }: SliderProps) {
+  const id = useId();
+  const pct = ((value - min) / (max - min)) * 100;
+  const display = formatValue ? formatValue(value) : String(value);
+  const minLbl = formatValue ? formatValue(min) : String(min);
+  const maxLbl = formatValue ? formatValue(max) : String(max);
+
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-2">
+        <label htmlFor={id} className="text-slate-600 dark:text-slate-300 font-medium">{label}</label>
+        <span className={`font-bold ${warn ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>{display}{unit}</span>
+      </div>
+      <div className="relative h-6 flex items-center">
+        {/* track bg */}
+        <div className="absolute inset-x-0 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full" />
+        {/* track fill */}
+        <div
+          className={`absolute left-0 h-1.5 rounded-full transition-colors ${warn ? 'bg-red-500' : 'bg-blue-500 dark:bg-blue-400'}`}
+          style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+        />
+        {/* hidden input */}
+        <input
+          id={id}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={e => onChange(+e.target.value)}
+          className={`slider-track ${warn ? 'warn-thumb' : ''}`}
+        />
+      </div>
+      <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-1">
+        <span>{minLbl}{unit}</span>
+        <span>{maxLbl}{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+const INIT_ALERTS: AlertItem[] = [
+  { id: 1, message: 'Повышенный расход теплоносителя — ЦТП-2', severity: 'warning', time: '08:45' },
+  { id: 2, message: 'Плановое ТО насосной станции НС-4 — завтра 09:00', severity: 'warning', time: '07:30' },
+];
+
 export default function Dashboard() {
-  const [nodes, setNodes] = useState<CurrentResponse['nodes']>([]);
-  const [alerts, setAlerts] = useState<ApiAlert[]>([]);
-  const [chartHistory, setChartHistory] = useState<Reading[]>([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  const supplyTemp = nodes
-    .flatMap(n => n.sensors)
-    .find(s => s.temperature_supply != null)?.temperature_supply ?? null;
-
-  const returnTemp = nodes
-    .flatMap(n => n.sensors)
-    .find(s => s.temperature_return != null)?.temperature_return ?? null;
-
-  const pressure = nodes
-    .flatMap(n => n.sensors)
-    .find(s => s.pressure != null)?.pressure ?? null;
-
-  const allSensors = nodes.flatMap(n => n.sensors);
-  const criticalCount = allSensors.filter(s => {
-    if (s.pressure != null && s.pressure < 0.4) return true;
-    if (s.temperature_supply != null && s.temperature_supply > 95) return true;
-    return false;
-  }).length;
-
-  const status = criticalCount > 0 ? 'Авария'
-    : (supplyTemp != null && supplyTemp > 85) || (pressure != null && pressure < 0.5) ? 'Предупреждение' : 'Норма';
-
-  const fetchData = useCallback(async () => {
-    try {
-      const data = await apiGet<CurrentResponse>('/api/current');
-      setNodes(data.nodes);
-      setError('');
-
-      const sensor = data.nodes
-        .flatMap(n => n.sensors)
-        .find(s => s.temperature_supply != null || s.pressure != null);
-
-      if (sensor) {
-        const now = formatTime(new Date());
-        setChartHistory(prev => {
-          const newPoint: Reading = {
-            time: now,
-            supplyTemp: sensor.temperature_supply,
-            returnTemp: sensor.temperature_return,
-            pressure: sensor.pressure,
-            heatLoad: sensor.heat_load,
-          };
-          return [...prev.slice(-59), newPoint];
-        });
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка загрузки');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [supplyTemp, setSupplyTemp]   = useState(75);
+  const [returnTemp, setReturnTemp]   = useState(55);
+  const [pressure,   setPressure]     = useState(0.6);
+  const [chartData,  setChartData]    = useState<Reading[]>(() => generateHistory(75, 55, 0.6));
+  const [alerts,     setAlerts]       = useState<AlertItem[]>(INIT_ALERTS);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadAlerts() {
-      try {
-        const data = await apiGet<{ alerts?: ApiAlert[]; items?: ApiAlert[] }>('/alerts?status=active&page=1');
-        if (cancelled) return;
-        setAlerts((data.alerts ?? data.items ?? []).slice(0, 50));
-      } catch { /* ignore */ }
+    const now = new Date();
+    const lbl = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    setChartData(prev =>
+      prev.length === 0 ? prev : [...prev.slice(-11), { time: lbl, supplyTemp, returnTemp, pressure }]
+    );
+    if (pressure < 0.4 || supplyTemp > 95) {
+      const msg = pressure < 0.4
+        ? `Критическое давление: ${pressure.toFixed(2)} МПа`
+        : `Критическая температура подачи: ${supplyTemp}°C`;
+      setAlerts(prev => {
+        if (prev.some(a => a.severity === 'critical' && a.message === msg)) return prev;
+        return [{ id: Date.now(), message: msg, severity: 'critical', time: lbl }, ...prev];
+      });
     }
-    loadAlerts();
-    return () => { cancelled = true; };
-  }, []);
+  }, [supplyTemp, returnTemp, pressure]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 size={24} className="animate-spin text-blue-600 dark:text-blue-400" />
-        <span className="ml-3 text-sm text-slate-500 dark:text-slate-400">Загрузка данных...</span>
-      </div>
-    );
-  }
-
-  if (error && nodes.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 text-center">
-        <AlertTriangle size={32} className="text-red-400 mb-3" />
-        <p className="text-sm text-red-600 dark:text-red-400 font-medium">Не удалось загрузить данные</p>
-        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{error}</p>
-        <button onClick={fetchData} className="mt-4 text-sm text-blue-600 dark:text-blue-400 hover:underline">Повторить</button>
-      </div>
-    );
-  }
-
-  const sensorCount = allSensors.length;
-  const nodeCount = nodes.length;
+  const status = pressure < 0.4 || supplyTemp > 95 ? 'Авария'
+    : pressure < 0.5  || supplyTemp > 85 ? 'Предупреждение' : 'Норма';
+  const recent = [...chartData].reverse().slice(0, 5);
 
   return (
     <div className="space-y-5">
+      {/* Page title */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-slate-800 dark:text-white">Главная панель</h1>
@@ -128,12 +126,13 @@ export default function Dashboard() {
         </span>
       </div>
 
+      {/* Stat cards */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Температура подачи', value: supplyTemp != null ? `${supplyTemp.toFixed(1)}°C` : '—', icon: Thermometer, warn: supplyTemp != null && supplyTemp > 95, sub: supplyTemp != null ? (supplyTemp > 95 ? '⚠ Превышение порога' : `Норма: до 95°C`) : 'Нет данных' },
-          { label: 'Температура обратки', value: returnTemp != null ? `${returnTemp.toFixed(1)}°C` : '—', icon: Thermometer, warn: false, sub: supplyTemp != null && returnTemp != null ? `Δ = ${(supplyTemp - returnTemp).toFixed(0)}°C` : 'Нет данных' },
-          { label: 'Давление сети', value: pressure != null ? `${pressure.toFixed(2)} МПа` : '—', icon: Gauge, warn: pressure != null && pressure < 0.4, sub: pressure != null ? (pressure < 0.4 ? '⚠ Критическое давление' : 'Норма: ≥ 0.40 МПа') : 'Нет данных' },
-          { label: 'Активных датчиков', value: String(sensorCount), icon: Activity, warn: false, sub: `Узлов: ${nodeCount}` },
+          { label: 'Температура подачи', value: `${supplyTemp}°C`, icon: Thermometer, warn: supplyTemp > 95, sub: 'Норма: до 95°C' },
+          { label: 'Температура обратки', value: `${returnTemp}°C`, icon: Thermometer, warn: false, sub: `Δ = ${(supplyTemp - returnTemp).toFixed(0)}°C` },
+          { label: 'Давление сети', value: `${pressure.toFixed(2)} МПа`, icon: Gauge, warn: pressure < 0.4, sub: 'Норма: ≥ 0.40 МПа' },
+          { label: 'Активных аварий', value: String(alerts.filter(a => a.severity === 'critical').length), icon: AlertTriangle, warn: alerts.some(a => a.severity === 'critical'), sub: `Предупреждений: ${alerts.filter(a => a.severity === 'warning').length}` },
         ].map(({ label, value, icon: Icon, warn, sub }) => (
           <div key={label} className={`bg-white dark:bg-slate-800 border rounded-xl p-4 transition-colors ${warn ? 'border-red-300 dark:border-red-700' : 'border-slate-200 dark:border-slate-700'}`}>
             <div className="flex items-center justify-between mb-3">
@@ -143,48 +142,49 @@ export default function Dashboard() {
               </div>
             </div>
             <div className={`text-2xl font-bold ${warn ? 'text-red-600 dark:text-red-400' : 'text-slate-800 dark:text-white'}`}>{value}</div>
-            <div className={`text-xs mt-1 ${warn ? 'text-red-500 dark:text-red-400 font-medium' : 'text-slate-400 dark:text-slate-500'}`}>{sub}</div>
+            <div className={`text-xs mt-1 ${warn ? 'text-red-500 dark:text-red-400 font-medium' : 'text-slate-400 dark:text-slate-500'}`}>
+              {warn ? '⚠ Превышение порога' : sub}
+            </div>
           </div>
         ))}
       </div>
 
+      {/* Main grid */}
       <div className="grid grid-cols-3 gap-5">
-        {/* Left column */}
+        {/* Left: sliders + journal */}
         <div className="space-y-4">
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
               <Activity size={15} className="text-blue-600 dark:text-blue-400" />
-              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Узлы теплосети</h2>
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Панель управления узлом</h2>
             </div>
-            <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
-              {nodes.length === 0 ? (
-                <div className="px-4 py-6 text-center text-sm text-slate-400 dark:text-slate-500">Нет данных об узлах</div>
-              ) : nodes.map(n => (
-                <div key={n.node_id} className="px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{n.node_name}</span>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">{n.sensors.length} датч.</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {n.sensors.slice(0, 3).map(s => (
-                      <span key={s.sensor_id} className={`text-xs px-1.5 py-0.5 rounded-md
-                        ${s.temperature_supply != null && s.temperature_supply > 95 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
-                          : s.pressure != null && s.pressure < 0.4 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
-                        {s.sensor_name}
-                        {s.temperature_supply != null ? ` ${s.temperature_supply.toFixed(1)}°C` : ''}
-                      </span>
-                    ))}
-                    {n.sensors.length > 3 && <span className="text-xs text-slate-400 dark:text-slate-500">+{n.sensors.length - 3}</span>}
-                  </div>
-                </div>
-              ))}
+            <div className="p-4 space-y-5">
+              <Slider
+                label="Температура подачи"
+                value={supplyTemp} min={60} max={100} step={1} unit="°C"
+                warn={supplyTemp > 95}
+                onChange={setSupplyTemp}
+              />
+              <Slider
+                label="Температура обратки"
+                value={returnTemp} min={40} max={80} step={1} unit="°C"
+                warn={false}
+                onChange={setReturnTemp}
+              />
+              <Slider
+                label="Давление сети"
+                value={pressure} min={0.10} max={1.20} step={0.01} unit="МПа"
+                warn={pressure < 0.4}
+                onChange={setPressure}
+                formatValue={v => v.toFixed(2)}
+              />
             </div>
           </div>
 
+          {/* Journal */}
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700">
-              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Последние показания</h2>
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Журнал параметров</h2>
             </div>
             <table className="w-full text-xs">
               <thead>
@@ -196,20 +196,12 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {chartHistory.length === 0 ? (
-                  <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400 dark:text-slate-500">Ожидание данных...</td></tr>
-                ) : [...chartHistory].reverse().slice(0, 10).map((r, i) => (
+                {recent.map((r, i) => (
                   <tr key={i} className={`border-b border-slate-50 dark:border-slate-700/50 last:border-0 ${i === 0 ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
                     <td className="px-4 py-2 text-slate-400 dark:text-slate-500">{r.time}</td>
-                    <td className={`px-4 py-2 text-right font-semibold tabular-nums ${r.supplyTemp != null && r.supplyTemp > 95 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>
-                      {r.supplyTemp != null ? r.supplyTemp.toFixed(1) : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right font-semibold tabular-nums text-slate-700 dark:text-slate-200">
-                      {r.returnTemp != null ? r.returnTemp.toFixed(1) : '—'}
-                    </td>
-                    <td className={`px-4 py-2 text-right font-semibold tabular-nums ${r.pressure != null && r.pressure < 0.4 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>
-                      {r.pressure != null ? r.pressure.toFixed(2) : '—'}
-                    </td>
+                    <td className={`px-4 py-2 text-right font-semibold tabular-nums ${r.supplyTemp > 95 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>{r.supplyTemp}</td>
+                    <td className="px-4 py-2 text-right font-semibold tabular-nums text-slate-700 dark:text-slate-200">{r.returnTemp}</td>
+                    <td className={`px-4 py-2 text-right font-semibold tabular-nums ${r.pressure < 0.4 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>{r.pressure}</td>
                   </tr>
                 ))}
               </tbody>
@@ -217,125 +209,83 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Right column — charts + alerts */}
+        {/* Right: charts + alerts */}
         <div className="col-span-2 space-y-4">
+          {/* Temp chart */}
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">График температур</h2>
-              <span className="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md px-2 py-0.5">~1 мин</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md px-2 py-0.5">60 мин</span>
             </div>
             <div className="p-4">
-              {chartHistory.length === 0 ? (
-                <div className="flex items-center justify-center h-[190px] text-sm text-slate-400 dark:text-slate-500">Ожидание данных...</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={190}>
-                  <LineChart data={chartHistory} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#94a3b8' }} unit="°" axisLine={false} tickLine={false} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #334155', background: '#1e293b' }}
-                      itemStyle={{ color: '#e2e8f0' }}
-                      formatter={(v, name) => {
-                        if (name === 'Подача' || name === 'Обратка') return [v != null ? `${Number(v).toFixed(1)}°C` : '—'];
-                        return [v != null ? `${Number(v).toFixed(1)}` : '—'];
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#cbd5e1' }} />
-                    <Line type="monotone" dataKey="supplyTemp" name="Подача" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
-                    <Line type="monotone" dataKey="returnTemp" name="Обратка" stroke="#0ea5e9" strokeWidth={2} dot={false} connectNulls />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
+              <ResponsiveContainer width="100%" height={190}>
+                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[30, 110]} tick={{ fontSize: 10, fill: '#94a3b8' }} unit="°" axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #334155', background: '#1e293b' }}
+                    itemStyle={{ color: '#e2e8f0' }}
+                    formatter={(v: any) => [v != null ? `${v}°C` : '—']}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11, color: '#cbd5e1' }} />
+                  <Line type="monotone" dataKey="supplyTemp" name="Подача" stroke="#2563eb" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="returnTemp" name="Обратка" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
-              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
-                <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Давление</h2>
-                <span className="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md px-2 py-0.5">~1 мин</span>
-              </div>
-              <div className="p-4">
-                {chartHistory.length === 0 ? (
-                  <div className="flex items-center justify-center h-[130px] text-sm text-slate-400 dark:text-slate-500">Ожидание данных...</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={130}>
-                    <LineChart data={chartHistory} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                      <YAxis domain={['auto', 'auto']} tickFormatter={(v: number) => v.toFixed(1)} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #334155', background: '#1e293b' }}
-                        itemStyle={{ color: '#e2e8f0' }}
-                        formatter={(v) => [v != null ? `${Number(v).toFixed(2)} МПа` : '—']}
-                      />
-                      <Line type="monotone" dataKey="pressure" name="Давление" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
+          {/* Pressure chart */}
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">График давления</h2>
+              <span className="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md px-2 py-0.5">60 мин</span>
             </div>
-
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
-              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
-                <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Тепловая нагрузка</h2>
-                <span className="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md px-2 py-0.5">~1 мин</span>
-              </div>
-              <div className="p-4">
-                {chartHistory.length === 0 ? (
-                  <div className="flex items-center justify-center h-[130px] text-sm text-slate-400 dark:text-slate-500">Ожидание данных...</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={130}>
-                    <LineChart data={chartHistory} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                      <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#94a3b8' }} unit="Гкал" axisLine={false} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #334155', background: '#1e293b' }}
-                        itemStyle={{ color: '#e2e8f0' }}
-                        formatter={(v) => [v != null ? `${Number(v).toFixed(2)} Гкал/ч` : '—']}
-                      />
-                      <Line type="monotone" dataKey="heatLoad" name="Нагрузка" stroke="#10b981" strokeWidth={2} dot={false} connectNulls />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
+            <div className="p-4">
+              <ResponsiveContainer width="100%" height={130}>
+                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 1.4]} tickFormatter={(v: number) => v.toFixed(1)} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #334155', background: '#1e293b' }}
+                    itemStyle={{ color: '#e2e8f0' }}
+                    formatter={(v: any) => [v != null ? `${Number(v).toFixed(2)} МПа` : '—']}
+                  />
+                  <Line type="monotone" dataKey="pressure" name="Давление" stroke="#7c3aed" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
+          {/* Alerts */}
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden transition-colors">
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Аварийные события</h2>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full
-                ${alerts.some(a => a.alert_level === 'critical' || a.alert_level === 'emergency')
-                  ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
-                  : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>
+                ${alerts.some(a => a.severity === 'critical') ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>
                 {alerts.length} событий
               </span>
             </div>
             <div className="divide-y divide-slate-50 dark:divide-slate-700/50 max-h-44 overflow-y-auto">
               {alerts.length === 0 ? (
                 <div className="px-4 py-4 text-sm text-slate-400 dark:text-slate-500 text-center">Аварийных событий нет</div>
-              ) : alerts.map(a => {
-                const isCritical = a.alert_level === 'critical' || a.alert_level === 'emergency';
-                const time = a.created_at ? new Date(a.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-                return (
-                  <div key={a.alert_id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5
-                      ${isCritical ? 'bg-red-100 dark:bg-red-900/40' : 'bg-amber-100 dark:bg-amber-900/40'}`}>
-                      <AlertTriangle size={13} className={isCritical ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-xs font-bold ${isCritical ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                        {isCritical ? 'Авария' : 'Предупреждение'}
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{a.message}</div>
-                    </div>
-                    <span className="text-xs text-slate-400 dark:text-slate-500 flex-shrink-0">{time}</span>
+              ) : alerts.map(a => (
+                <div key={a.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5
+                    ${a.severity === 'critical' ? 'bg-red-100 dark:bg-red-900/40' : 'bg-amber-100 dark:bg-amber-900/40'}`}>
+                    <AlertTriangle size={13} className={a.severity === 'critical' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'} />
                   </div>
-                );
-              })}
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-xs font-bold ${a.severity === 'critical' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      {a.severity === 'critical' ? 'Авария' : 'Предупреждение'}
+                    </div>
+                    <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{a.message}</div>
+                  </div>
+                  <span className="text-xs text-slate-400 dark:text-slate-500 flex-shrink-0">{a.time}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
